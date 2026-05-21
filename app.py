@@ -1,16 +1,38 @@
 import streamlit as st
 from openai import OpenAI
 import base64
+import re  # 新增导入正则表达式模块
 
 # ==========================================
-# 0. 核心工具函数：修复 LaTeX 数学公式乱码
+# 0. 核心工具函数：修复 LaTeX 数学公式乱码 + 清洗多余括号
 # ==========================================
 def format_latex(text):
-    """转换大模型的 LaTeX 公式包裹符为 Streamlit 兼容格式"""
+    """转换大模型的 LaTeX 公式包裹符为 Streamlit 兼容格式，并清洗多余括号"""
     if not isinstance(text, str):
         return text
-    # 替换行内公式的括号为 $，替换块级公式的括号为 $$
-    return text.replace(r'\(', '$').replace(r'\)', '$').replace(r'\[', '$$').replace(r'\]', '$$')
+
+    # ----- 第一步：清洗分数中的多余括号 -----
+    # 处理 (\frac{(5)}{(10)}) 或 \frac{(5)}{(10)} 等情况
+    # 将 \frac{(数字)}{(数字)} 变为 \frac{数字}{数字}
+    text = re.sub(r'\\frac\{\((\d+)\)\}\{\((\d+)\)\}', r'\\frac{\1}{\2}', text)
+    # 处理分子或分母只有一侧有括号，例如 \frac{(5)}{10} 或 \frac{5}{(10)}
+    text = re.sub(r'\\frac\{\(?(\d+)\)?\}\{\(?(\d+)\)?\}', r'\\frac{\1}{\2}', text)
+    # 处理整个分数被外层圆括号包裹的情况：(\frac{5}{10}) -> \frac{5}{10}
+    text = re.sub(r'\(\\frac\{(\d+)\}\{(\d+)\}\)', r'\\frac{\1}{\2}', text)
+
+    # ----- 第二步：将 LaTeX 分隔符转换为 Streamlit 可识别的 $ 或 $$ -----
+    # 行内公式 \(...\) 转换为 $...$
+    text = text.replace(r'\(', '$').replace(r'\)', '$')
+    # 块级公式 \[...\] 转换为 $$...$$
+    text = text.replace(r'\[', '$$').replace(r'\]', '$$')
+
+    # 可选：如果清洗后仍有 \frac 没有被 $ 包裹（兜底），自动加上
+    # 但通常上一步已经处理好了，为了安全可以加一个检测
+    if '\\frac' in text and '$' not in text[:10]:
+        # 简单处理：整段视为行内公式
+        text = f'${text}$'
+
+    return text
 
 # ==========================================
 # 1. 页面与侧边栏基础配置
@@ -41,24 +63,21 @@ SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海�
 # ==========================================
 # 3. 状态管理 (维持上下文记忆)
 # ==========================================
-# 彻底修复：明确赋予空列表
 if "messages" not in st.session_state:
-    st.session_state.messages =
+    st.session_state.messages = []  # 修复空赋值
 
 # ==========================================
 # 4. 主界面与多模态交互
 # ==========================================
 st.title("🦉 你的专属数学思维伴侣")
 
-# 步骤一：图片上传
 uploaded_file = st.file_uploader("📸 遇到不会的题？把错题拍下来传给我吧！", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     st.image(uploaded_file, caption="当前题目", use_container_width=True)
 
-# 步骤二：渲染历史聊天记录
+# 渲染历史聊天记录
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        # 兼容处理多模态列表消息与纯文本消息
         if isinstance(msg["content"], list):
             for item in msg["content"]:
                 if item["type"] == "text":
@@ -67,22 +86,21 @@ for msg in st.session_state.messages:
         else:
             st.markdown(format_latex(msg["content"]))
 
-# 步骤三：用户输入与 AI 响应
+# 用户输入
 if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在哪里了？"):
     if not api_key:
         st.error("⚠️ 请先在左侧边栏配置 API Key！")
         st.stop()
 
-    is_first_user_msg = all(m["role"]!= "user" for m in st.session_state.messages)
-    
-    # 根据是否是首条消息（带图片），明确赋予对应结构
+    is_first_user_msg = all(m["role"] != "user" for m in st.session_state.messages)
+
     if uploaded_file and is_first_user_msg:
         base64_image = base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
         image_format = uploaded_file.type.split('/')[-1]
-        
+
         user_msg_content = [
             {
-                "type": "text", 
+                "type": "text",
                 "text": f"（这是我上传的题目图片）\n{prompt}"
             },
             {
@@ -93,43 +111,44 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
             }
         ]
     else:
-        # 后续对话直接使用字符串结构
         user_msg_content = prompt
 
     st.session_state.messages.append({"role": "user", "content": user_msg_content})
-    
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 步骤四：调用大模型并流式输出
+    # 调用 AI
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        
+
         try:
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://open.bigmodel.cn/api/paas/v4/"
             )
-            
-            # 彻底修复：将系统提示词作为字典包裹进列表，再与历史消息相加
-            api_messages = + st.session_state.messages
-            
+
+            # 正确构造 messages（加上系统提示）
+            api_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + st.session_state.messages
+
             response = client.chat.completions.create(
                 model="glm-4v-flash",
                 messages=api_messages,
                 stream=True,
             )
-            
-            # 彻底修复：解析 chunk.choices 列表的第一项
+
             for chunk in response:
-                if chunk.choices and chunk.choices.delta.content is not None:
-                    full_response += chunk.choices.delta.content
+                if chunk.choices and chunk.choices[0].delta.content is not None:
+                    full_response += chunk.choices[0].delta.content
+                    # 实时预览也应用格式化（可选）
                     message_placeholder.markdown(format_latex(full_response) + "▌")
-                    
-            message_placeholder.markdown(format_latex(full_response))
-            
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+
+            # 最终显示完全清洗后的内容
+            final_display = format_latex(full_response)
+            message_placeholder.markdown(final_display)
+
+            st.session_state.messages.append({"role": "assistant", "content": full_response})  # 存储原始内容，下次对话会再次清洗
+
         except Exception as e:
             st.error(f"调用 AI 老师时出错了，请检查网络或 API Key: {str(e)}")
