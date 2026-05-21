@@ -1,7 +1,35 @@
 import streamlit as st
 from openai import OpenAI
 import base64
+import re
 
+def clean_math_expression_advanced(text: str) -> str:
+    """
+    高级版本：通用清洗各种带多余括号的分数
+    """
+    # 场景1：\frac{(5)}{(10)} 或 \frac{(5)}{10} 或 \frac{5}{(10)}
+    # 分子分母可以各自独立有括号或无括号
+    text = re.sub(
+        r'\\frac\{\(?(\d+)\)?\}\{\(?(\d+)\)?\}',
+        r'$\\frac{\1}{\2}$',
+        text
+    )
+    
+    # 场景2：(\frac{5}{10}) 分数外面套了一层圆括号
+    text = re.sub(
+        r'\(\\frac\{(\d+)\}\{(\d+)\}\)',
+        r'$\\frac{\1}{\2}$',
+        text
+    )
+    
+    # 场景3：分数外面已经有一对 $...$，但内部仍然有括号：$ \frac{(5)}{(10)} $
+    text = re.sub(
+        r'\$?\\frac\{\(?(\d+)\)?\}\{\(?(\d+)\)?\}\$?',
+        r'$\\frac{\1}{\2}$',
+        text
+    )
+    
+    return text
 # ==========================================
 # 1. 页面与侧边栏基础配置
 # ==========================================
