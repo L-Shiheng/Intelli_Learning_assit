@@ -41,6 +41,7 @@ SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海�
 # ==========================================
 # 3. 状态管理 (维持上下文记忆)
 # ==========================================
+# 修复1：正确初始化空列表
 if "messages" not in st.session_state:
     st.session_state.messages =
 
@@ -54,17 +55,17 @@ uploaded_file = st.file_uploader("📸 遇到不会的题？把错题拍下来�
 if uploaded_file:
     st.image(uploaded_file, caption="当前题目", use_container_width=True)
 
-# 步骤二：渲染历史聊天记录 (应用 LaTeX 格式修复)
+# 步骤二：渲染历史聊天记录 (应用 LaTeX 格式修复及兼容列表/字符串格式)
 for msg in st.session_state.messages:
-    if msg["role"]!= "system":
-        with st.chat_message(msg["role"]):
-            if isinstance(msg["content"], list):
-                for item in msg["content"]:
-                    if item["type"] == "text":
-                        display_text = item["text"].replace("（这是我上传的题目图片）\n", "")
-                        st.markdown(format_latex(display_text))
-            else:
-                st.markdown(format_latex(msg["content"]))
+    with st.chat_message(msg["role"]):
+        # 修复4：正确处理多模态列表消息与纯文本消息的展示
+        if isinstance(msg["content"], list):
+            for item in msg["content"]:
+                if item["type"] == "text":
+                    display_text = item["text"].replace("（这是我上传的题目图片）\n", "")
+                    st.markdown(format_latex(display_text))
+        else:
+            st.markdown(format_latex(msg["content"]))
 
 # 步骤三：用户输入与 AI 响应
 if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在哪里了？"):
@@ -72,32 +73,36 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
         st.error("⚠️ 请先在左侧边栏配置 API Key！")
         st.stop()
 
-    user_msg_content =
-    
     is_first_user_msg = all(m["role"]!= "user" for m in st.session_state.messages)
     
+    # 修复2：不再使用空列表append，直接根据条件构造正确的 content 结构
     if uploaded_file and is_first_user_msg:
         base64_image = base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
         image_format = uploaded_file.type.split('/')[-1]
         
-        user_msg_content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": f"data:image/{image_format};base64,{base64_image}"
+        user_msg_content = [
+            {
+                "type": "text", 
+                "text": f"（这是我上传的题目图片）\n{prompt}"
+            },
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/{image_format};base64,{base64_image}"
+                }
             }
-        })
-        user_msg_content.append({
-            "type": "text", 
-            "text": f"（这是我上传的题目图片）\n{prompt}"
-        })
+        ]
     else:
+        # 后续对话直接传入纯文本字符串
         user_msg_content = prompt
 
     st.session_state.messages.append({"role": "user", "content": user_msg_content})
+    
+    # 界面回显用户输入
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 步骤四：调用大模型并流式输出 (应用 LaTeX 格式修复)
+    # 步骤四：调用大模型并流式输出
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
@@ -108,6 +113,7 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
                 base_url="https://open.bigmodel.cn/api/paas/v4/"
             )
             
+            # 修复3：正确地将系统提示词作为列表元素拼接到历史记录最前方
             api_messages = + st.session_state.messages
             
             response = client.chat.completions.create(
@@ -116,11 +122,12 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
                 stream=True,
             )
             
+            # 修复5：正确解析 OpenAI SDK 的 chunk 结构 (chunk.choices)
             for chunk in response:
-                if chunk.choices.delta.content is not None:
+                if chunk.choices and chunk.choices.delta.content is not None:
                     full_response += chunk.choices.delta.content
-                    # 在打字机效果中实时转换 LaTeX 符号
                     message_placeholder.markdown(format_latex(full_response) + "▌")
+                    
             # 最终输出去掉光标
             message_placeholder.markdown(format_latex(full_response))
             
