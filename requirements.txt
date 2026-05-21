@@ -1,7 +1,2 @@
 streamlit
-pandas
-numpy
-scipy
-plotly
-scikit-learn
-statsmodels
+openai
