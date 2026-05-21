@@ -9,14 +9,13 @@ st.set_page_config(page_title="AI 名师伴读", page_icon="🦉", layout="cente
 
 with st.sidebar:
     st.title("⚙️ 系统配置")
-    # 动态输入 API Key，保证不在代码中硬编码，保护你的隐私
     api_key = st.text_input("请输入智谱 API Key (GLM-4V-Flash)", type="password")
     st.markdown("[免费获取智谱API Key](https://open.bigmodel.cn/)")
     st.markdown("---")
     st.info("💡 提示：本应用采用智谱最新免费视觉大模型。请引导孩子拍摄清晰的题目照片。")
 
 # ==========================================
-# 2. 苏格拉底式教育大脑设定 (Prompt Engineering)
+# 2. 苏格拉底式教育大脑设定
 # ==========================================
 SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海淀区顶尖小学数学教师。你的辅导对象是一名三年级的学生。
 你的核心教学红线：【无论如何，绝对不可以直接给出计算的最终答案，也不能直接写出完整的解题算式】！
@@ -33,49 +32,46 @@ SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海�
 # 3. 状态管理 (维持上下文记忆)
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages =
+    st.session_state.messages = []   # 修正点1
 
 # ==========================================
 # 4. 主界面与多模态交互
 # ==========================================
 st.title("🦉 你的专属数学思维伴侣")
 
-# 步骤一：图片上传
 uploaded_file = st.file_uploader("📸 遇到不会的题？把错题拍下来传给我吧！", type=["jpg", "jpeg", "png"])
 if uploaded_file:
     st.image(uploaded_file, caption="当前题目", use_container_width=True)
 
-# 步骤二：渲染历史聊天记录
+# 渲染历史聊天记录
 for msg in st.session_state.messages:
-    if msg["role"]!= "system":
+    if msg["role"] != "system":
         with st.chat_message(msg["role"]):
-            # 由于我们的消息内容可能包含图片结构，需要专门提取文字部分进行展示
             if isinstance(msg["content"], list):
                 for item in msg["content"]:
                     if item["type"] == "text":
-                        # 过滤掉系统附加的后台提示
                         display_text = item["text"].replace("（这是我上传的题目图片）\n", "")
                         st.markdown(display_text)
             else:
-                st.markdown(msg["content"])
+                st.markdown(msg["content"])   # 修正点2：纯文本消息直接显示
 
-# 步骤三：用户输入与 AI 响应
+# 用户输入
 if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在哪里了？"):
     if not api_key:
         st.error("⚠️ 请先在左侧边栏配置 API Key！")
         st.stop()
 
-    # 处理用户输入结构 (判断是否需要包含图片)
-    user_msg_content =
-    
-    # 我们只在孩子发出的第一条消息中附带图片，避免后续对话 Token 过载
-    is_first_user_msg = all(m["role"]!= "user" for m in st.session_state.messages)
-    
+    # 修正点3：初始化用户消息内容
+    user_msg_content = []
+
+    # 判断是否是第一条用户消息（用于决定是否附带图片）
+    is_first_user_msg = all(m["role"] != "user" for m in st.session_state.messages)
+
     if uploaded_file and is_first_user_msg:
-        # 将图片转换为大模型需要的 Base64 格式
+        # 将图片转换为 Base64
         base64_image = base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
         image_format = uploaded_file.type.split('/')[-1]
-        
+
         user_msg_content.append({
             "type": "image_url",
             "image_url": {
@@ -83,48 +79,44 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
             }
         })
         user_msg_content.append({
-            "type": "text", 
+            "type": "text",
             "text": f"（这是我上传的题目图片）\n{prompt}"
         })
     else:
-        user_msg_content = prompt
+        user_msg_content = prompt   # 纯文本
 
-    # 1. 记录并展示用户消息
+    # 记录用户消息到 session_state
     st.session_state.messages.append({"role": "user", "content": user_msg_content})
     with st.chat_message("user"):
         st.markdown(prompt)
 
-    # 2. 调用大模型并流式输出
+    # 调用 AI 并流式输出
     with st.chat_message("assistant"):
         message_placeholder = st.empty()
         full_response = ""
-        
+
         try:
-            # 使用智谱的兼容 OpenAI SDK 接口
             client = OpenAI(
                 api_key=api_key,
                 base_url="https://open.bigmodel.cn/api/paas/v4/"
             )
-            
-            # 组装发送给大模型的完整记忆，强制加入系统提示词作为最高指令
-            api_messages = + st.session_state.messages
-            
-            # 调用免费视觉模型 GLM-4V-Flash
+
+            # 修正点4：正确构造 API 消息（加上系统提示）
+            api_messages = [{"role": "system", "content": SYSTEM_PROMPT}] + st.session_state.messages
+
             response = client.chat.completions.create(
                 model="glm-4v-flash",
                 messages=api_messages,
                 stream=True,
             )
-            
-            # 打字机效果呈现
+
             for chunk in response:
-                if chunk.choices.delta.content is not None:
-                    full_response += chunk.choices.delta.content
+                if chunk.choices[0].delta.content is not None:
+                    full_response += chunk.choices[0].delta.content
                     message_placeholder.markdown(full_response + "▌")
             message_placeholder.markdown(full_response)
-            
-            # 保存 AI 的回答到记忆中
+
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
+
         except Exception as e:
             st.error(f"调用 AI 老师时出错了，请检查网络或 API Key: {str(e)}")
