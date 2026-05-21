@@ -33,7 +33,7 @@ SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海�
 # 3. 状态管理 (维持上下文记忆)
 # ==========================================
 if "messages" not in st.session_state:
-    st.session_state.messages =
+    st.session_state.messages = # 修复：这里补上了空列表
 
 # ==========================================
 # 4. 主界面与多模态交互
@@ -66,7 +66,7 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
         st.stop()
 
     # 处理用户输入结构 (判断是否需要包含图片)
-    user_msg_content =
+    user_msg_content = # 修复：这里补上了空列表
     
     # 我们只在孩子发出的第一条消息中附带图片，避免后续对话 Token 过载
     is_first_user_msg = all(m["role"]!= "user" for m in st.session_state.messages)
@@ -81,50 +81,3 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
             "image_url": {
                 "url": f"data:image/{image_format};base64,{base64_image}"
             }
-        })
-        user_msg_content.append({
-            "type": "text", 
-            "text": f"（这是我上传的题目图片）\n{prompt}"
-        })
-    else:
-        user_msg_content = prompt
-
-    # 1. 记录并展示用户消息
-    st.session_state.messages.append({"role": "user", "content": user_msg_content})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # 2. 调用大模型并流式输出
-    with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        full_response = ""
-        
-        try:
-            # 使用智谱的兼容 OpenAI SDK 接口
-            client = OpenAI(
-                api_key=api_key,
-                base_url="https://open.bigmodel.cn/api/paas/v4/"
-            )
-            
-            # 组装发送给大模型的完整记忆，强制加入系统提示词作为最高指令
-            api_messages = + st.session_state.messages
-            
-            # 调用免费视觉模型 GLM-4V-Flash
-            response = client.chat.completions.create(
-                model="glm-4v-flash",
-                messages=api_messages,
-                stream=True,
-            )
-            
-            # 打字机效果呈现
-            for chunk in response:
-                if chunk.choices.delta.content is not None:
-                    full_response += chunk.choices.delta.content
-                    message_placeholder.markdown(full_response + "▌")
-            message_placeholder.markdown(full_response)
-            
-            # 保存 AI 的回答到记忆中
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
-        except Exception as e:
-            st.error(f"调用 AI 老师时出错了，请检查网络或 API Key: {str(e)}")
