@@ -41,7 +41,7 @@ SYSTEM_PROMPT = """你是一位极具亲和力、专业素养极高的北京海�
 # ==========================================
 # 3. 状态管理 (维持上下文记忆)
 # ==========================================
-# 修复1：正确初始化空列表
+# 彻底修复：明确赋予空列表
 if "messages" not in st.session_state:
     st.session_state.messages =
 
@@ -55,10 +55,10 @@ uploaded_file = st.file_uploader("📸 遇到不会的题？把错题拍下来�
 if uploaded_file:
     st.image(uploaded_file, caption="当前题目", use_container_width=True)
 
-# 步骤二：渲染历史聊天记录 (应用 LaTeX 格式修复及兼容列表/字符串格式)
+# 步骤二：渲染历史聊天记录
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
-        # 修复4：正确处理多模态列表消息与纯文本消息的展示
+        # 兼容处理多模态列表消息与纯文本消息
         if isinstance(msg["content"], list):
             for item in msg["content"]:
                 if item["type"] == "text":
@@ -75,7 +75,7 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
 
     is_first_user_msg = all(m["role"]!= "user" for m in st.session_state.messages)
     
-    # 修复2：不再使用空列表append，直接根据条件构造正确的 content 结构
+    # 根据是否是首条消息（带图片），明确赋予对应结构
     if uploaded_file and is_first_user_msg:
         base64_image = base64.b64encode(uploaded_file.getvalue()).decode("utf-8")
         image_format = uploaded_file.type.split('/')[-1]
@@ -93,12 +93,11 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
             }
         ]
     else:
-        # 后续对话直接传入纯文本字符串
+        # 后续对话直接使用字符串结构
         user_msg_content = prompt
 
     st.session_state.messages.append({"role": "user", "content": user_msg_content})
     
-    # 界面回显用户输入
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -113,7 +112,7 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
                 base_url="https://open.bigmodel.cn/api/paas/v4/"
             )
             
-            # 修复3：正确地将系统提示词作为列表元素拼接到历史记录最前方
+            # 彻底修复：将系统提示词作为字典包裹进列表，再与历史消息相加
             api_messages = + st.session_state.messages
             
             response = client.chat.completions.create(
@@ -122,13 +121,12 @@ if prompt := st.chat_input("和老师说说你是怎么想的，或者你卡在�
                 stream=True,
             )
             
-            # 修复5：正确解析 OpenAI SDK 的 chunk 结构 (chunk.choices)
+            # 彻底修复：解析 chunk.choices 列表的第一项
             for chunk in response:
                 if chunk.choices and chunk.choices.delta.content is not None:
                     full_response += chunk.choices.delta.content
                     message_placeholder.markdown(format_latex(full_response) + "▌")
                     
-            # 最终输出去掉光标
             message_placeholder.markdown(format_latex(full_response))
             
             st.session_state.messages.append({"role": "assistant", "content": full_response})
